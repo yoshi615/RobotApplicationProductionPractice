@@ -1,6 +1,9 @@
 const int sensorPin = A0;
 const float baselineTemp = 22.0;
 
+bool mg400Started = false;
+unsigned long led5OnStartTime = 0;
+
 void setup() {
     Serial.begin(9600);
     for (int pinNumber = 2; pinNumber < 8; pinNumber++) {
@@ -29,9 +32,23 @@ void loop() {
         digitalWrite(i, (i - 2 < ledCount) ? HIGH : LOW);
     }
 
-    // 5個目のLEDが点灯したらシリアルでコマンド送信
-    if (ledCount >= 5) {
-        Serial.println("MG400_START");
+    // 5本目のLED（ピン番号6）が点灯しているか確認
+    bool isLed5On = (ledCount >= 5);
+
+    if (isLed5On && !mg400Started) {
+        // 点灯開始時間を記録（まだ記録されていない場合）
+        if (led5OnStartTime == 0) {
+            led5OnStartTime = millis();
+        }
+
+        // 3秒以上経過したらコマンド送信
+        if (millis() - led5OnStartTime >= 3000) {
+            Serial.println("MG400_START");
+            mg400Started = true;  // 一度だけ送信
+        }
+    } else {
+        // LEDがオフになったらタイマーをリセット
+        led5OnStartTime = 0;
     }
 
     delay(500); // 適度に待機（デバッグしやすくするため）
