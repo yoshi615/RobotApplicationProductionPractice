@@ -2,6 +2,7 @@ const int sensorPin = A0;
 const float baselineTemp = 22.0;
 
 bool mg400Started = false;
+bool mg400Stopped = false;  // 停止信号送信フラグを追加
 unsigned long led5OnStartTime = 0;
 
 void setup() {
@@ -45,10 +46,18 @@ void loop() {
         if (millis() - led5OnStartTime >= 3000) {
             Serial.println("MG400_START");
             mg400Started = true;  // 一度だけ送信
+            mg400Stopped = false; // 停止フラグをリセット
         }
     } else {
         // LEDがオフになったらタイマーをリセット
         led5OnStartTime = 0;
+    }
+
+    // LEDが3つに減った時の停止処理
+    if (ledCount <= 3 && mg400Started && !mg400Stopped) {
+        Serial.println("MG400_STOP");
+        mg400Stopped = true;  // 一度だけ送信
+        mg400Started = false; // 開始フラグをリセット（再開始可能にする）
     }
 
     delay(500); // 適度に待機（デバッグしやすくするため）
