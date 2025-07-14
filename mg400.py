@@ -2,6 +2,7 @@ import serial
 import time
 import socket
 from threading import Thread
+import keyboard
 
 # シリアル通信設定
 ARDUINO_SERIAL_PORT = 'COM4'  # Arduinoが接続されているポート
@@ -17,6 +18,7 @@ class MG400WiFiController:
         self.arduino_serial = None
         self.dashboard_socket = None
         self.move_socket = None
+        self.stop_loop = False
         
     def send_command(self, socket_conn, command):
         """MG400にコマンドを送信し、応答を確認"""
@@ -110,45 +112,61 @@ class MG400WiFiController:
         """MG400の動作シーケンスを実行"""
         try:
             print("MG400動作開始...")
+            print("Escキーでループを停止できます")
             
             # 現在位置確認
             pos_response = self.send_command(self.dashboard_socket, "GetPose()")
             print(f"現在位置: {pos_response}")
             
-            # ホームポジションに移動
-            print("ホームポジションに移動中...")
-            print("目標座標: X=250, Y=0, Z=50, R=0")
-            self.send_command(self.move_socket, "MovJ(250,0,50,0)")
-            time.sleep(3)
-            
-            # 移動後の位置確認
-            pos_response = self.send_command(self.dashboard_socket, "GetPose()")
-            print(f"ホームポジション到達後の位置: {pos_response}")
-            
-            # Z軸下降
-            print("Z軸下降中...")
-            print("目標座標: X=200, Y=0, Z=30, R=0")
-            self.send_command(self.move_socket, "MovJ(250,0,30,0)")
-            time.sleep(3)
-            
-            # 下降後の位置確認
-            pos_response = self.send_command(self.dashboard_socket, "GetPose()")
-            print(f"Z軸下降後の位置: {pos_response}")
-            
-            # Z軸上昇
-            print("Z軸上昇中...")
-            print("目標座標: X=200, Y=0, Z=100, R=0")
-            self.send_command(self.move_socket, "MovJ(250,0,100,0)")
-            time.sleep(3)
-            
-            # 上昇後の位置確認
-            pos_response = self.send_command(self.dashboard_socket, "GetPose()")
-            print(f"Z軸上昇後の位置: {pos_response}")
+            # Z軸の繰り返し動作
+            loop_count = 0
+            while not self.stop_loop:
+                loop_count += 1
+                print(f"\n--- ループ {loop_count} 回目 ---")
+                
+                # Z軸下降
+                print("Z軸下降中...")
+                self.send_command(self.move_socket, "MovJ(250,0,30,0)")
+                time.sleep(0.1)
+                
+                if self.stop_loop:
+                    break
+                    
+                # 下降後の位置確認
+                pos_response = self.send_command(self.dashboard_socket, "GetPose()")
+                print(f"Z軸下降後の位置: {pos_response}")
+                
+                # Z軸上昇
+                print("Z軸上昇中...")
+                self.send_command(self.move_socket, "MovJ(250,0,100,0)")
+                time.sleep(0.1)
+                
+                if self.stop_loop:
+                    break
+                    
+                # 上昇後の位置確認
+                pos_response = self.send_command(self.dashboard_socket, "GetPose()")
+                print(f"Z軸上昇後の位置: {pos_response}")
+                
+                if self.stop_loop:
+                    break
             
             print("MG400動作完了")
             
         except Exception as e:
             print(f"MG400動作エラー: {e}")
+    
+    def keyboard_monitor(self):
+        """キーボード監視（Escで停止）"""
+        while not self.stop_loop:
+            try:
+                if keyboard.is_pressed('Esc'):
+                    print("\nEscキーが押されました。動作を停止します...")
+                    self.stop_loop = True
+                    break
+                time.sleep(0.1)
+            except:
+                pass
     
     def connect_arduino_serial(self):
         """Arduinoシリアル接続（有線）"""
@@ -170,6 +188,9 @@ class MG400WiFiController:
                     
                     if received_data == TRIGGER_SIGNAL:
                         print("トリガー信号を受信しました！")
+                        self.stop_loop = False  # ループフラグをリセット
+                        # キーボード監視を開始
+                        Thread(target=self.keyboard_monitor, daemon=True).start()
                         Thread(target=self.execute_mg400_sequence).start()
                 
                 time.sleep(0.1)
