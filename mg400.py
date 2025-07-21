@@ -110,18 +110,105 @@ class MG400WiFiController:
             print(f"MG400有効化エラー: {e}")
             return False
         
+    def get_current_position(self):
+        """現在位置を取得してパースする"""
+        try:
+            pos_response = self.send_command(self.dashboard_socket, "GetPose()")
+            if pos_response:
+                # レスポンスから座標を抽出 (例: "{250.00,0.00,0.00,0.00}")
+                pos_str = pos_response.strip('{}')
+                coords = [float(x.strip()) for x in pos_str.split(',')]
+                if len(coords) >= 2:
+                    return coords[0], coords[1]  # X, Y座標を返す
+            return None, None
+        except Exception as e:
+            print(f"現在位置取得エラー: {e}")
+            return None, None
+
+    def find_nearest_target_position(self, current_x, current_y):
+        """現在位置から最も近い目標座標を見つける"""
+        # 目標座標の定義
+        targets = {
+            "center": (250, 0),
+            "positive": (250, 150),
+            "negative": (250, -150)
+        }
+        
+        min_distance = float('inf')
+        nearest_target = "center"
+        nearest_coords = (250, 0)
+        
+        for name, (target_x, target_y) in targets.items():
+            # ユークリッド距離を計算
+            distance = ((current_x - target_x) ** 2 + (current_y - target_y) ** 2) ** 0.5
+            print(f"目標座標 {name}({target_x}, {target_y}) までの距離: {distance:.2f}")
+            
+            if distance < min_distance:
+                min_distance = distance
+                nearest_target = name
+                nearest_coords = (target_x, target_y)
+        
+        print(f"最も近い目標座標: {nearest_target} {nearest_coords}")
+        return nearest_target, nearest_coords
+
+    def move_to_nearest_and_stop(self):
+        """現在位置から最も近い座標に移動してから停止"""
+        try:
+            print("現在位置から最も近い座標への移動を開始...")
+            
+            # 現在位置を取得
+            current_x, current_y = self.get_current_position()
+            if current_x is None or current_y is None:
+                print("現在位置の取得に失敗しました。中央位置に移動します...")
+                self.send_command(self.move_socket, "MovJ(250,0,0,0)")
+                time.sleep(5)
+                return
+            
+            print(f"現在位置: X={current_x:.2f}, Y={current_y:.2f}")
+            
+            # 最も近い目標座標を見つける
+            nearest_name, (target_x, target_y) = self.find_nearest_target_position(current_x, current_y)
+            
+            # 安全な速度で移動
+            self.send_command(self.move_socket, "Speed(15)")
+            time.sleep(0.5)
+            
+            # 最も近い座標に移動
+            if nearest_name == "positive":
+                print("y軸正方向の座標(250,150,0,-64)に移動中...")
+                self.send_command(self.move_socket, "MovJ(250,150,0,-64)")
+            elif nearest_name == "negative":
+                print("y軸負方向の座標(250,-150,0,-166)に移動中...")
+                self.send_command(self.move_socket, "MovJ(250,-150,0,-166)")
+            else:  # center
+                print("中央座標(250,0,0,0)に移動中...")
+                self.send_command(self.move_socket, "MovJ(250,0,0,0)")
+            
+            # 移動完了を待機
+            print("移動完了を待機中...")
+            time.sleep(6)  # 十分な待機時間
+            
+            # 移動後の位置確認
+            final_x, final_y = self.get_current_position()
+            if final_x is not None and final_y is not None:
+                print(f"移動完了後の位置: X={final_x:.2f}, Y={final_y:.2f}")
+            
+            # 動作停止コマンドを送信
+            print("最寄り座標到達後、動作を停止します...")
+            self.send_command(self.dashboard_socket, "StopRobot()")
+            
+        except Exception as e:
+            print(f"最寄り座標への移動エラー: {e}")
+
     def stop_mg400_movement(self):
         """MG400の動作を強制停止"""
         try:
             print("MG400の動作を停止中...")
-            # 動作停止コマンドを送信
-            self.send_command(self.dashboard_socket, "StopRobot()")
-            # 緊急停止も試行
-            self.send_command(self.dashboard_socket, "EmergencyStop()")
-            print("MG400停止コマンドを送信しました")
             
-            # アームを中心位置に戻す
-            self.return_to_center()
+            # 最寄りの座標まで移動してから停止
+            self.move_to_nearest_and_stop()
+            
+            print("MG400停止コマンドを送信しました")
             
             # 停止後のエラーチェックとクリア処理
             self.handle_stop_errors()
@@ -139,8 +226,8 @@ class MG400WiFiController:
         try:
             print("停止後エラーチェックを開始...")
             
-            # 少し待機してからエラー状態をチェック
-            time.sleep(1)
+            # 停止コマンド後の安定化待機
+            time.sleep(3)
             
             # ロボット状態を確認
             mode_response = self.send_command(self.dashboard_socket, "RobotMode()")
@@ -150,21 +237,28 @@ class MG400WiFiController:
             error_response = self.send_command(self.dashboard_socket, "GetErrorID()")
             print(f"エラー状態: {error_response}")
             
-            # エラーがある場合はクリア
+            # エラーがある場合は詳細処理
             if error_response and not ("0" in error_response and len(error_response.split(',')) == 1):
-                print("エラーを検出しました。クリア処理を開始...")
+                print("エラーを検出しました。詳細クリア処理を開始...")
                 
-                # 複数回エラークリアを試行
-                for i in range(3):
-                    print(f"エラークリア試行 {i+1}/3...")
+                # 緊急停止解除
+                print("緊急停止を解除中...")
+                self.send_command(self.dashboard_socket, "ResetRobot()")
+                time.sleep(2)
+                
+                # 複数回エラークリアを試行（より長い待機時間）
+                for i in range(5):
+                    print(f"エラークリア試行 {i+1}/5...")
                     clear_response = self.send_command(self.dashboard_socket, "ClearError()")
                     if clear_response and "0" in clear_response:
                         print("✓ エラークリア成功")
                         break
-                    time.sleep(1)
+                    time.sleep(2)  # より長い待機時間
+                
+                # エラークリア後の十分な待機
+                time.sleep(3)
                 
                 # エラークリア後の状態確認
-                time.sleep(1)
                 error_check = self.send_command(self.dashboard_socket, "GetErrorID()")
                 print(f"エラークリア後の状態: {error_check}")
                 
@@ -174,43 +268,118 @@ class MG400WiFiController:
                 
                 if mode_response_final and "5" in mode_response_final:
                     print("✓ ロボットは有効状態を維持しています（ライトは緑色のままです）")
+                elif mode_response_final and "4" in mode_response_final:
+                    print("ロボットが無効化されています。再有効化します...")
+                    self.enable_robot_after_error()
                 else:
-                    print("⚠ ロボット状態の確認ができませんでした")
-                    # ロボットが無効化されている場合は再有効化
-                    print("ロボットを再有効化します...")
-                    self.send_command(self.dashboard_socket, "EnableRobot()")
-                    time.sleep(2)
-                    
-                    # 再有効化の確認
-                    final_check = self.send_command(self.dashboard_socket, "RobotMode()")
-                    if final_check and "5" in final_check:
-                        print("✓ ロボットが再有効化されました")
-                         # 中央へ移動
-                        print("y軸負方向に150mm移動中...")
-                        self.send_command(self.move_socket, "MovJ(250,0,0,0)")
-                    else:
-                        print("⚠ ロボットの再有効化に失敗しました")
+                    print("⚠ ロボット状態の確認ができませんでした。強制再有効化を試みます...")
+                    self.enable_robot_after_error()
             else:
-                print("エラーは検出されませんでした。ロボットは正常な状態です。")
+                print("エラーは検出されませんでした。ロボット状態を確認します。")
                 # ロボット状態を確認して必要に応じて有効化
                 mode_check = self.send_command(self.dashboard_socket, "RobotMode()")
                 if mode_check and "4" in mode_check:
                     print("ロボットが無効化されています。再有効化します...")
-                    self.send_command(self.dashboard_socket, "EnableRobot()")
-                    time.sleep(2)
-                    
-                    final_check = self.send_command(self.dashboard_socket, "RobotMode()")
-                    if final_check and "5" in final_check:
-                        print("✓ ロボットが再有効化されました")
-                    else:
-                        print("⚠ ロボットの再有効化に失敗しました")
+                    self.enable_robot_after_error()
                 elif mode_check and "5" in mode_check:
                     print("✓ ロボットは有効状態を維持しています")
+                else:
+                    print("ロボット状態が不明です。再有効化を試みます...")
+                    self.enable_robot_after_error()
             
             print("停止後処理が完了しました（ロボットは有効状態のままです）")
             
         except Exception as e:
             print(f"停止後エラーハンドリングエラー: {e}")
+
+    def enable_robot_after_error(self):
+        """エラー後のロボット再有効化処理"""
+        try:
+            print("ロボット再有効化処理を開始...")
+            
+            # まず無効化して状態をリセット
+            self.send_command(self.dashboard_socket, "DisableRobot()")
+            time.sleep(2)
+            
+            # 再度エラークリア
+            for i in range(3):
+                print(f"再エラークリア試行 {i+1}/3...")
+                clear_response = self.send_command(self.dashboard_socket, "ClearError()")
+                if clear_response and "0" in clear_response:
+                    print("✓ 再エラークリア成功")
+                    break
+                time.sleep(1)
+            
+            # ロボット有効化
+            print("ロボットを再有効化...")
+            enable_response = self.send_command(self.dashboard_socket, "EnableRobot()")
+            print(f"EnableRobot応答: {enable_response}")
+            
+            # 有効化の確認（より長い待機）
+            for i in range(10):
+                time.sleep(3)
+                mode_response = self.send_command(self.dashboard_socket, "RobotMode()")
+                print(f"再有効化状態確認 {i+1}/10: {mode_response}")
+                
+                if mode_response and "5" in mode_response:
+                    print("✓ ロボットが正常に再有効化されました")
+                    return True
+                elif mode_response and "4" in mode_response:
+                    print("ロボットはまだ無効状態です。再度有効化を試みます...")
+                    self.send_command(self.dashboard_socket, "EnableRobot()")
+            
+            print("⚠ ロボット再有効化の確認ができませんでした")
+            return False
+            
+        except Exception as e:
+            print(f"ロボット再有効化エラー: {e}")
+            return False
+
+    def return_to_center(self):
+        """確実に中央位置(250,0,0,0)に戻る処理"""
+        try:
+            print("中央位置復帰処理を開始...")
+            
+            # 現在位置を確認
+            pos_response = self.send_command(self.dashboard_socket, "GetPose()")
+            print(f"現在位置: {pos_response}")
+            
+            # 安全な速度に設定
+            self.send_command(self.move_socket, "Speed(10)")  # より安全な速度
+            time.sleep(1)
+            
+            # 中央位置への移動を複数回試行
+            for attempt in range(3):
+                print(f"中央位置移動試行 {attempt+1}/3...")
+                
+                # MovJコマンドで中央に移動
+                move_response = self.send_command(self.move_socket, "MovJ(250,0,0,0)")
+                print(f"MovJコマンド応答: {move_response}")
+                
+                # 移動完了を待機（十分な時間）
+                print("移動完了を待機中...")
+                time.sleep(8)  # より長い待機時間
+                
+                # 移動後の位置確認
+                final_pos = self.send_command(self.dashboard_socket, "GetPose()")
+                print(f"移動後位置確認: {final_pos}")
+                
+                # 位置が正しいかチェック（簡易的な確認）
+                if final_pos and "250" in final_pos and ",0," in final_pos:
+                    print("✓ 中央位置への移動が完了しました")
+                    break
+                else:
+                    print(f"移動未完了。再試行します... (試行 {attempt+1}/3)")
+                    if attempt < 2:  # 最後の試行でない場合
+                        time.sleep(2)
+            else:
+                print("⚠ 中央位置への移動が完全には確認できませんでした")
+            
+            # 速度を元に戻す
+            self.send_command(self.move_socket, "Speed(20)")
+            
+        except Exception as e:
+            print(f"中央位置復帰エラー: {e}")
 
     def execute_mg400_sequence(self):
         """MG400の動作シーケンスを実行"""
@@ -305,10 +474,15 @@ class MG400WiFiController:
         while not self.stop_loop:
             try:
                 if keyboard.is_pressed('Esc'):
-                    print("\nEscキーが押されました。動作を停止します...")
+                    print("\nEscキーが押されました。現在位置から最も近い座標まで移動後に停止します...")
                     self.stop_loop = True
-                    # 即座に停止コマンドを送信
-                    self.stop_mg400_movement()
+                    # 最寄り座標への移動処理
+                    self.move_to_nearest_and_stop()
+                    # エラーハンドリング
+                    self.handle_stop_errors()
+                    # フラグリセット
+                    self.is_running = False
+                    print("Escキーによる停止処理完了")
                     break
                 time.sleep(0.05)  # より頻繁にチェック
             except:
@@ -351,10 +525,16 @@ class MG400WiFiController:
                         Thread(target=self.execute_mg400_sequence).start()
                     
                     elif received_data == STOP_SIGNAL:
-                        print("停止信号を受信しました！")
+                        print("停止信号を受信しました！現在位置から最も近い座標まで移動後に停止します...")
                         if self.is_running:
                             self.stop_loop = True
-                            self.stop_mg400_movement()
+                            # 最寄り座標への移動処理
+                            self.move_to_nearest_and_stop()
+                            # エラーハンドリング
+                            self.handle_stop_errors()
+                            # フラグリセット
+                            self.is_running = False
+                            print("STOP信号による停止処理完了")
                         else:
                             print("現在動作していません")
                 

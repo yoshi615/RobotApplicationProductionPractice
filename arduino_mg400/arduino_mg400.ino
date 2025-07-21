@@ -4,6 +4,7 @@ const float baselineTemp = 22.0;
 bool mg400Started = false;
 bool mg400Stopped = false;  // 停止信号送信フラグを追加
 unsigned long led5OnStartTime = 0;
+int tempCount = 0;  // 27℃以上を観測した回数（グローバル変数として宣言）
 
 void setup() {
     Serial.begin(9600);
@@ -36,20 +37,29 @@ void loop() {
     // 5本目のLED（ピン番号6）が点灯しているか確認
     bool isLed5On = (ledCount >= 5);
 
+    // 27℃以上を3回観測したらSTARTコマンド送信
     if (isLed5On && !mg400Started) {
-        // 点灯開始時間を記録（まだ記録されていない場合）
-        if (led5OnStartTime == 0) {
-            led5OnStartTime = millis();
+        // 27℃以上の場合カウントを増加
+        if (temperature >= 27.0) {
+            tempCount++;
+            Serial.print("温度27℃以上観測回数: ");
+            Serial.println(tempCount);
+            
+            // 3回観測したらコマンド送信
+            if (tempCount >= 3) {
+                Serial.println("MG400_START");
+                mg400Started = true;  // 一度だけ送信
+                mg400Stopped = false; // 停止フラグをリセット
+                tempCount = 0;  // カウンターをリセット
+            }
         }
+    }
 
-        // 3秒以上経過したらコマンド送信
-        if (millis() - led5OnStartTime >= 3000) {
-            Serial.println("MG400_START");
-            mg400Started = true;  // 一度だけ送信
-            mg400Stopped = false; // 停止フラグをリセット
-        }
-    } else {
-        // LEDがオフになったらタイマーをリセット
+    // LED5が消灯した場合はカウンターとフラグをリセット
+    if (!isLed5On) {
+        tempCount = 0;
+        mg400Started = false;
+        mg400Stopped = false;
         led5OnStartTime = 0;
     }
 
