@@ -525,8 +525,9 @@ class MG400WiFiController:
                         Thread(target=self.execute_mg400_sequence).start()
                     
                     elif received_data == STOP_SIGNAL:
-                        print("停止信号を受信しました！現在位置から最も近い座標まで移動後に停止します...")
+                        print("停止信号を受信しました！")
                         if self.is_running:
+                            print("現在位置から最も近い座標まで移動後に停止します...")
                             self.stop_loop = True
                             # 最寄り座標への移動処理
                             self.move_to_nearest_and_stop()
@@ -543,6 +544,29 @@ class MG400WiFiController:
             except Exception as e:
                 print(f"Arduinoシリアル監視エラー: {e}")
                 break
+
+    def execute_stop_sequence(self):
+        """停止処理を別スレッドで実行"""
+        try:
+            print("停止処理を開始します...")
+            self.stop_loop = True
+            
+            # 少し待機して現在の動作を停止させる
+            time.sleep(0.5)
+            
+            # 最寄り座標への移動処理
+            self.move_to_nearest_and_stop()
+            
+            # エラーハンドリング
+            self.handle_stop_errors()
+            
+            # フラグリセット
+            self.is_running = False
+            print("停止処理が完了しました")
+            
+        except Exception as e:
+            print(f"停止処理エラー: {e}")
+            self.is_running = False
 
     def run(self):
         """メイン実行関数"""
