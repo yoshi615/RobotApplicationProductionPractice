@@ -16,59 +16,53 @@ void setup() {
 
 void loop() {
     int sensorVal = analogRead(sensorPin);
-    Serial.print("sensor Value: ");
-    Serial.print(sensorVal);
-
     float voltage = (sensorVal / 1024.0) * 5.0;
-    Serial.print(", Volts: ");
-    Serial.print(voltage);
-
     float temperature = (voltage - 0.5) * 100;
-    Serial.print(", degrees C: ");
-    Serial.println(temperature);
-
+    
+    // 1行でまとめて送信
+    Serial.print("Sensor: ");
+    Serial.print(sensorVal);
+    Serial.print(" | Volts: ");
+    Serial.print(voltage);
+    Serial.print(" | Temp: ");
+    Serial.print(temperature);
+    Serial.println("℃");  // 最後に改行
+    
     int ledCount = (temperature - baselineTemp > 0) ? (int)(temperature - baselineTemp) : 0;
-    ledCount = constrain(ledCount, 0, 6); // 最大6つのLEDを制御
-
+    ledCount = constrain(ledCount, 0, 6);
+    
+    // LED制御
     for (int i = 2; i < 8; i++) {
         digitalWrite(i, (i - 2 < ledCount) ? HIGH : LOW);
     }
-
-    // 5本目のLED（ピン番号6）が点灯しているか確認
+    
     bool isLed5On = (ledCount >= 5);
-
-    // 27℃以上を3回観測したらSTARTコマンド送信
+    
     if (isLed5On && !mg400Started) {
-        // 27℃以上の場合カウントを増加
         if (temperature >= 27.0) {
             tempCount++;
             Serial.print("温度27℃以上観測回数: ");
             Serial.println(tempCount);
             
-            // 3回観測したらコマンド送信
             if (tempCount >= 3) {
-                Serial.println("MG400_START");
-                mg400Started = true;  // 一度だけ送信
-                mg400Stopped = false; // 停止フラグをリセット
-                tempCount = 0;  // カウンターをリセット
+                Serial.println("MG400_START");  // ← トリガー信号
+                mg400Started = true;
+                mg400Stopped = false;
+                tempCount = 0;
             }
         }
     }
-
-    // LED5が消灯した場合はカウンターとフラグをリセット
+    
     if (!isLed5On) {
         tempCount = 0;
-        mg400Started = false;
-        mg400Stopped = false;
         led5OnStartTime = 0;
     }
-
-    // LEDが3つに減った時の停止処理
+    
     if (ledCount <= 3 && mg400Started && !mg400Stopped) {
-        Serial.println("MG400_STOP");
-        mg400Stopped = true;  // 一度だけ送信
-        mg400Started = false; // 開始フラグをリセット（再開始可能にする）
+        Serial.println("MG400_STOP");  // ← 停止信号
+        mg400Stopped = true;
+        mg400Started = false;
     }
-
-    delay(500); // 適度に待機（デバッグしやすくするため）
+    
+    delay(500);
 }
