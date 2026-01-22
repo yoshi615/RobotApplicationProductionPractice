@@ -1,5 +1,5 @@
 const int sensorPin = A0;
-const float baselineTemp = 22.0;
+const float baselineTemp = 23.0;
 
 bool mg400Started = false;
 bool mg400Stopped = false;  // 停止信号送信フラグを追加

@@ -142,8 +142,9 @@ class MG400WiFiController:
                     print("✓ ロボットが有効化されました")
 
                     # ペイロード設定を追加
+                    # PayLoad(質量[kg], 重心X[m], 重心Y[m], 重心Z[m])
                     print("ペイロード設定中...")
-                    self.send_command(self.dashboard_socket, "PayLoad(0.03,0.0001,0.0001,0.0015)")
+                    self.send_command(self.dashboard_socket, "PayLoad(0.037,0.075,0.45)")
                     time.sleep(1)
                     
                     # 中央へ移動
